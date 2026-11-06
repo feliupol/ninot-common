@@ -1,0 +1,125 @@
+---
+name: Release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-features
+      - run: cargo package --locked
+
+  publish:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CRATES_IO_API: https://crates.io/api/v1
+      OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.event.repository.name }}
+      WORKFLOW_FILE: release.yml
+      TP_ENVIRONMENT: crates-io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal
+      - id: crate
+        run: |
+          set -euo pipefail
+          meta=$(cargo metadata --no-deps --format-version 1)
+          name=$(jq -r '.packages[0].name' <<<"$meta")
+          base=$(jq -r '.packages[0].version' <<<"$meta")
+          # The tag names the release; Cargo.toml follows it.
+          version="${GITHUB_REF_NAME#v}"
+          semver='^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$'
+          if ! [[ "$version" =~ $semver ]]; then
+            echo "::error::tag $GITHUB_REF_NAME is not v<semver>"
+            exit 1
+          fi
+          if [ "$version" != "$base" ]; then
+            sed -i "0,/^version = \"$base\"$/s//version = \"$version\"/" Cargo.toml
+            stamped=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+            if [ "$stamped" != "$version" ]; then
+              echo "::error::could not set the package version to $version (found $stamped)"
+              exit 1
+            fi
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          crate_status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$REPO-release" "$CRATES_IO_API/crates/$name")
+          case "$crate_status" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::crates.io returned HTTP $crate_status for crate $name"; exit 1 ;;
+          esac
+          if [ "$crate_status" = 200 ]; then
+            version_status=$(curl -sS -o /dev/null -w '%{http_code}' -A "$REPO-release" "$CRATES_IO_API/crates/$name/$version")
+            case "$version_status" in
+              200) echo "published=true" >> "$GITHUB_OUTPUT"; echo "$name $version is already on crates.io, nothing to publish" ;;
+              404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+              *) echo "::error::crates.io returned HTTP $version_status for $name $version"; exit 1 ;;
+            esac
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Trusted Publishing cannot create a crate, so a first version uses the
+      # environment's API token, which then registers the trusted publisher.
+      - name: Publish the first version and register the trusted publisher
+        if: steps.crate.outputs.exists == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_FIRST_PUBLISH_TOKEN }}
+          NAME: ${{ steps.crate.outputs.name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error::$NAME is not on crates.io and the CRATES_IO_FIRST_PUBLISH_TOKEN secret of environment crates-io is empty"
+            exit 1
+          fi
+          cargo publish --allow-dirty
+          auth() { printf 'header = "Authorization: %s"\n' "$CARGO_REGISTRY_TOKEN" | curl -K - "$@"; }
+          configs="$CRATES_IO_API/trusted_publishing/github_configs"
+          auth -sS --fail-with-body -A "$REPO-release" -o configs.json "$configs?crate=$NAME"
+          present=$(jq --arg o "$OWNER" --arg r "$REPO" --arg w "$WORKFLOW_FILE" --arg e "$TP_ENVIRONMENT" \
+            '[.github_configs[] | select(.repository_owner == $o and .repository_name == $r and .workflow_filename == $w and .environment == $e)] | length' configs.json)
+          if [ "$present" -gt 0 ]; then
+            echo "Trusted publisher for $NAME already configured"
+          else
+            body=$(jq -n --arg c "$NAME" --arg o "$OWNER" --arg r "$REPO" --arg w "$WORKFLOW_FILE" --arg e "$TP_ENVIRONMENT" \
+              '{github_config: {crate: $c, repository_owner: $o, repository_name: $r, workflow_filename: $w, environment: $e}}')
+            code=$(auth -sS -o response.json -w '%{http_code}' -A "$REPO-release" -X POST -H 'Content-Type: application/json' -d "$body" "$configs")
+            if [ "$code" != 201 ] && [ "$code" != 200 ]; then
+              echo "::error::creating the trusted publisher failed with HTTP $code: $(jq -c '.errors // empty' response.json 2>/dev/null)"
+              exit 1
+            fi
+            echo "Trusted publisher created for $NAME"
+          fi
+          rm -f configs.json response.json
+      - id: auth
+        if: steps.crate.outputs.exists == 'true' && steps.crate.outputs.published == 'false'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - if: steps.crate.outputs.exists == 'true' && steps.crate.outputs.published == 'false'
+        run: cargo publish --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

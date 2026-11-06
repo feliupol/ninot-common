@@ -1,0 +1,67 @@
+[package]
+name = "ninot-common"
+version = "2026.45.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Common utilities for building Ninots: small in-memory fake reproductions of services, for use in tests"
+license = "MIT"
+repository = "https://github.com/feliupol/ninot-common"
+readme = "README.md"
+keywords = ["testing", "fake", "mock", "http", "fault-injection"]
+categories = ["development-tools::testing", "web-programming::http-server"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+
+[features]
+default = []
+# Binding a port and serving an axum router on a background tokio runtime.
+server = ["dep:axum", "dep:futures-util", "dep:http", "dep:tokio"]
+# Serving HTTPS with a throwaway certificate authority, on top of `server`.
+tls = [
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:rcgen",
+    "dep:tokio-rustls",
+    "dep:tower-service",
+    "server",
+]
+# Recording what clients ask of a fake, to find redundant requests, on top of `server`.
+profile = ["server", "axum/matched-path"]
+# The shared state handle and snapshots of it.
+state = ["dep:serde_json"]
+# Bare repositories on disk and git's smart HTTP protocol.
+git = ["dep:gix", "dep:url"]
+# Generating the operation table from a spec, as a build dependency.
+build = [
+    "dep:prettyplease",
+    "dep:proc-macro2",
+    "dep:quote",
+    "dep:serde_json",
+    "dep:syn",
+]
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
+fastrand = "2"
+futures-util = { version = "0.3", default-features = false, optional = true }
+getrandom = "0.4"
+gix = { version = "0.87", default-features = false, features = ["sha1", "revision", "blob-diff"], optional = true }
+http = { version = "1", optional = true }
+hyper = { version = "1", features = ["server", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio"], optional = true }
+matchit = "0.8"
+percent-encoding = "2"
+prettyplease = { version = "0.2", optional = true }
+proc-macro2 = { version = "1", optional = true }
+quote = { version = "1", optional = true }
+rcgen = { version = "0.14", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+syn = { version = "2", default-features = false, features = ["full", "parsing"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"], optional = true }
+tower-service = { version = "0.3", optional = true }
+url = { version = "2", optional = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking"] }
+serde_json = "1"
