@@ -38,16 +38,21 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal
-      # The tag names the version; a rerun skips a version crates.io already has.
+      # The tag must name the committed version; a rerun skips a version crates.io already has.
       - env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          name=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
+          read -r name committed < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r --arg manifest "$PWD/Cargo.toml" \
+              '.packages[] | select(.manifest_path == $manifest) | "\(.name) \(.version)"')
+          if [ "$committed" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match $name's committed version $committed" >&2
+            exit 1
+          fi
           if cargo info "$name@$version" >/dev/null 2>&1; then
             echo "$name $version is already on crates.io"
             exit 0
           fi
-          sed -i "0,/^version = \".*\"$/s//version = \"$version\"/" Cargo.toml
-          cargo publish --allow-dirty
+          cargo publish --locked
