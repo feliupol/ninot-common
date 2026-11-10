@@ -1,6 +1,6 @@
 [package]
 name = "ninot-common"
-version = "2026.45.0"
+version = "2026.46.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Common utilities for building Ninots: small in-memory fake reproductions of services, for use in tests"

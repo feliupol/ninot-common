@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "ninot-common"
-version = "2026.45.0"
+version = "2026.46.0"
 dependencies = [
  "axum",
  "fastrand",
