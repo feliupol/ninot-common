@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow the calendar: `<year>.<ISO week>.<n>`.
 
+## [Unreleased]
+
+### Added
+
+- `git`: typed repository operations without a working tree: `merge` in five styles (merge commit, squash, fast-forward, rebase, rebase then merge commit) with a compare-and-swap of the base branch, `mergeable`, `move_ref` (compare-and-swap), `delete_ref`, `is_valid_ref_name`, `commit_files`, `diff`, `format_patch` and `copy_branches`. Declined operations come back as a `Refusal` (conflicting paths, unrelated histories, not a fast-forward, missing or moved ref, invalid ref name), apart from I/O errors.
+- `git`: `Identity`, an author or committer with an optional date.
+
+### Changed
+
+- `git`: the `git` subprocesses the crate runs, `http_backend` included, run no repository hooks and never prompt for credentials.
+
 ## [2026.45.0] - 2026-11-05
 
 ### Added
